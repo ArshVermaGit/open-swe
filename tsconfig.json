@@ -1,7 +1,8 @@
 {
-  "extends": "@tsconfig/recommended",
   "compilerOptions": {
     "target": "ES2021",
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "lib": ["ES2023"],
     "module": "NodeNext",
     "moduleResolution": "nodenext",

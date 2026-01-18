@@ -36,6 +36,90 @@ export interface ModelTokenData extends CacheMetrics {
   model: string;
 }
 
+/**
+ * Tracks token usage and cost for a single operation or aggregation.
+ */
+export interface TokenCount {
+  /** Number of input (prompt) tokens */
+  inputTokens: number;
+  /** Number of output (completion) tokens */
+  outputTokens: number;
+  /** Total number of tokens (input + output) */
+  totalTokens: number;
+  /** Cost in USD for the input tokens */
+  inputCost: number;
+  /** Cost in USD for the output tokens */
+  outputCost: number;
+  /** Total cost in USD */
+  totalCost: number;
+  /** Timestamp when this count was recorded */
+  timestamp: string;
+  /** Formatted string for total usage (e.g. "1.5k tokens") */
+  formattedTotalTokens?: string;
+  /** Formatted string for total cost (e.g. "$0.05") */
+  formattedTotalCost?: string;
+}
+
+/**
+ * Tracks cumulative token usage across all operations.
+ */
+export interface TokenUsage {
+  /** Total usage statistics */
+  total: TokenCount;
+  /** Breakdown of usage by model */
+  byModel: Record<string, TokenCount>;
+  /** Timestamp when usage tracking started */
+  startTime: string;
+  /** Timestamp when usage was last updated */
+  lastUpdated: string;
+}
+
+/**
+ * Breakdown of token usage by agent role.
+ */
+export interface TokenBreakdown {
+  /** Usage by the planner agent */
+  planner: TokenUsage;
+  /** Usage by the programmer agent */
+  programmer: TokenUsage;
+  /** Usage by the reviewer agent */
+  reviewer: TokenUsage;
+  /** Usage by the manager/router agent */
+  manager: TokenUsage;
+}
+
+/**
+ * User-configurable budget settings.
+ */
+export interface BudgetSettings {
+  /** Maximum budget in USD */
+  maxBudget: number;
+  /** Threshold for warning the user (0.0 to 1.0) */
+  warningThreshold: number;
+  /** Whether to hard stop when budget is exceeded */
+  hardStop: boolean;
+  /** Currency symbol for display (e.g. "$") */
+  currency: string;
+}
+
+/**
+ * Warning triggered when budget limits are approached or exceeded.
+ */
+export interface BudgetWarning {
+  /** Current spending amount */
+  currentSpend: number;
+  /** Budget limit amount */
+  budgetLimit: number;
+  /** Percentage of budget used (0-100) */
+  percentageUsed: number;
+  /** Warning message to display */
+  message: string;
+  /** Warning level severity */
+  severity: "info" | "warning" | "critical";
+  /** Timestamp of the warning */
+  timestamp: string;
+}
+
 export type PlanItem = {
   /**
    * The index of the plan item. This is the order in which
@@ -153,6 +237,30 @@ export type CustomRules = {
   testingInstructions?: string;
   pullRequestFormatting?: string;
 };
+
+export const INITIAL_TOKEN_COUNT: TokenCount = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  inputCost: 0,
+  outputCost: 0,
+  totalCost: 0,
+  timestamp: "",
+};
+
+export const createInitialTokenUsage = (): TokenUsage => ({
+  total: { ...INITIAL_TOKEN_COUNT, timestamp: new Date().toISOString() },
+  byModel: {},
+  startTime: new Date().toISOString(),
+  lastUpdated: new Date().toISOString(),
+});
+
+export const createInitialTokenBreakdown = (): TokenBreakdown => ({
+  planner: createInitialTokenUsage(),
+  programmer: createInitialTokenUsage(),
+  reviewer: createInitialTokenUsage(),
+  manager: createInitialTokenUsage(),
+});
 
 export const GraphAnnotation = MessagesZodState.extend({
   /**
@@ -282,6 +390,42 @@ export const GraphAnnotation = MessagesZodState.extend({
       schema: z.custom<ModelTokenData[]>().optional(),
       fn: tokenDataReducer,
     },
+  }),
+  /**
+   * Detailed token usage breakdown by agent.
+   */
+  tokenUsage: withLangGraph(z.custom<TokenBreakdown>(), {
+    reducer: {
+      schema: z.custom<TokenBreakdown>(),
+      fn: (state, update) => update ?? state,
+    },
+    default: createInitialTokenBreakdown,
+  }),
+  /**
+   * Budget settings for the session.
+   */
+  budgetSettings: withLangGraph(z.custom<BudgetSettings>(), {
+    reducer: {
+      schema: z.custom<BudgetSettings>(),
+      fn: (state, update) => update ?? state,
+    },
+    default: () => ({
+      maxBudget: 10.0,
+      warningThreshold: 0.8,
+      hardStop: false,
+      currency: "$",
+    }),
+  }),
+  /**
+   * List of budget warnings triggered.
+   */
+  budgetWarnings: withLangGraph(z.custom<BudgetWarning[]>(), {
+    reducer: {
+      schema: z.custom<BudgetWarning[]>(),
+      fn: (state: BudgetWarning[], update: BudgetWarning[]) =>
+        update ? [...state, ...update] : state,
+    },
+    default: () => [] as BudgetWarning[],
   }),
 });
 

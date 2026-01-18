@@ -51,8 +51,12 @@ import { filterMessagesWithoutContent } from "../../../../utils/message/content.
 import {
   CacheablePromptSegment,
   convertMessagesToCacheControlledMessages,
-  trackCachePerformance,
 } from "../../../../utils/caching.js";
+import {
+  invokeWithTracking,
+  updateTokenBreakdown,
+  checkBudgetLimits,
+} from "../../../../utils/llm-tracker.js";
 import { createMarkTaskCompletedToolFields } from "@openswe/shared/open-swe/tools";
 import {
   BaseMessage,
@@ -343,8 +347,10 @@ export async function generateAction(
         : {}),
     },
   );
-  const response = await modelWithTools.invoke(
+  const { response, tokenData, cost } = await invokeWithTracking(
+    modelWithTools,
     isAnthropicModel ? providerMessages.anthropic : providerMessages.openai,
+    { modelName, agentRole: "programmer" }
   );
 
   const hasToolCalls = !!response.tool_calls?.length;
@@ -358,7 +364,7 @@ export async function generateAction(
   if (
     response.tool_calls?.length &&
     response.tool_calls?.length > 1 &&
-    response.tool_calls.some((t) => t.name === markTaskCompletedTool.name)
+    response.tool_calls.some((t: any) => t.name === markTaskCompletedTool.name)
   ) {
     logger.error(
       `Multiple tool calls found, including ${markTaskCompletedTool.name}. Removing the ${markTaskCompletedTool.name} call.`,
@@ -367,7 +373,7 @@ export async function generateAction(
       },
     );
     response.tool_calls = response.tool_calls.filter(
-      (t) => t.name !== markTaskCompletedTool.name,
+      (t: any) => t.name !== markTaskCompletedTool.name,
     );
   }
 
@@ -376,18 +382,30 @@ export async function generateAction(
     ...(getMessageContentString(response.content) && {
       content: getMessageContentString(response.content),
     }),
-    ...(response.tool_calls?.map((tc) => ({
+    ...(response.tool_calls?.map((tc: any) => ({
       name: tc.name,
       args: tc.args,
     })) || []),
   });
 
   const newMessagesList = [...missingMessages, response];
+
+  // Update token breakdown and check budget
+  const newTokenUsage = updateTokenBreakdown(
+    state.tokenUsage,
+    "programmer",
+    tokenData,
+    cost
+  );
+  const budgetWarning = checkBudgetLimits(newTokenUsage, state.budgetSettings);
+
   return {
     messages: newMessagesList,
     internalMessages: newMessagesList,
     ...(newSandboxSessionId && { sandboxSessionId: newSandboxSessionId }),
     ...(latestTaskPlan && { taskPlan: latestTaskPlan }),
-    tokenData: trackCachePerformance(response, modelName),
+    tokenData,
+    tokenUsage: newTokenUsage,
+    budgetWarnings: budgetWarning ? [budgetWarning] : state.budgetWarnings,
   };
 }

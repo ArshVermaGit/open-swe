@@ -1,4 +1,4 @@
-import { CacheMetrics, ModelTokenData } from "@openswe/shared/open-swe/types";
+import { CacheMetrics, ModelTokenData, TokenBreakdown } from "@openswe/shared/open-swe/types";
 import {
   calculateCostSavings,
   tokenDataReducer,
@@ -27,6 +27,7 @@ import { useState } from "react";
 
 interface TokenUsageProps {
   tokenData?: ModelTokenData[] | CacheMetrics[];
+  realTimeUsage?: TokenBreakdown;
 }
 
 function isModelTokenData(
@@ -187,24 +188,41 @@ function calculateModelCost(modelData: ModelTokenData): number {
   return baseInputCost + cacheCreationCost + cacheHitCost + outputCost;
 }
 
-export function TokenUsage({ tokenData }: TokenUsageProps) {
+export function TokenUsage({ tokenData, realTimeUsage }: TokenUsageProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  if (!tokenData || tokenData.length === 0) return null;
+  // If we have real-time usage, aggregate it across all agents
+  let realTimeInput = 0;
+  let realTimeOutput = 0;
+  let realTimeCost = 0;
+  
+  if (realTimeUsage) {
+    const agents = ["planner", "programmer", "reviewer", "manager"] as const;
+    agents.forEach(agent => {
+      const usage = realTimeUsage[agent];
+      if (usage && usage.total) {
+        realTimeInput += usage.total.inputTokens;
+        realTimeOutput += usage.total.outputTokens;
+        realTimeCost += usage.total.totalCost;
+      }
+    });
+  }
 
-  const mergedTokenData = mergeTokenData(tokenData);
+  if ((!tokenData || tokenData.length === 0) && realTimeCost === 0) return null;
+
+  const mergedTokenData = mergeTokenData(tokenData || []);
   const totalCachedInputTokens =
     mergedTokenData.cacheCreationInputTokens +
     mergedTokenData.cacheReadInputTokens;
   const totalUncachedInputTokens = mergedTokenData.inputTokens;
   const cachePercentage = (
-    (totalCachedInputTokens /
-      (totalCachedInputTokens + totalUncachedInputTokens)) *
-    100
+    totalCachedInputTokens + totalUncachedInputTokens > 0
+      ? (totalCachedInputTokens / (totalCachedInputTokens + totalUncachedInputTokens)) * 100
+      : 0
   ).toFixed(2);
   const metrics = calculateCostSavings(mergedTokenData);
 
-  const hasModelData = isModelTokenData(tokenData);
+  const hasModelData = tokenData && isModelTokenData(tokenData);
   const modelTokenData = hasModelData
     ? mergeModelTokenData(tokenData as ModelTokenData[])
     : [];
@@ -213,6 +231,12 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
   const totalModelCost = hasModelData
     ? modelTokenData.reduce((sum, model) => sum + calculateModelCost(model), 0)
     : metrics.totalCost;
+
+  // Prefer real-time totals if they are larger (this handles the "live" update)
+  const displayInput = Math.max(metrics.totalInputTokens, realTimeInput);
+  const displayOutput = Math.max(metrics.totalOutputTokens, realTimeOutput);
+  const displayCost = Math.max(hasModelData ? totalModelCost : metrics.totalCost, realTimeCost);
+  const displayTotalTokens = displayInput + displayOutput;
 
   return (
     <HoverCard>
@@ -225,7 +249,7 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
           >
             {hasModelData
               ? `${modelTokenData.length} model${modelTokenData.length !== 1 ? "s" : ""}`
-              : `${tokenData.length} agent${tokenData.length !== 1 ? "s" : ""}`}
+              : `${tokenData?.length ?? 0} agent${(tokenData?.length ?? 0) !== 1 ? "s" : ""}`}
           </Badge>
         </button>
       </HoverCardTrigger>
@@ -245,7 +269,7 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
                 </span>
               </div>
               <p className="text-sm font-semibold">
-                {metrics.totalInputTokens.toLocaleString()}
+                {displayInput.toLocaleString()}
               </p>
             </div>
             <div className="space-y-1">
@@ -256,7 +280,7 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
                 </span>
               </div>
               <p className="text-sm font-semibold">
-                {metrics.totalOutputTokens.toLocaleString()}
+                {displayOutput.toLocaleString()}
               </p>
             </div>
           </div>
@@ -269,7 +293,7 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
                 Total Tokens
               </span>
               <span className="text-sm font-semibold">
-                {metrics.totalTokens.toLocaleString()}
+                {displayTotalTokens.toLocaleString()}
               </span>
             </div>
 
@@ -283,7 +307,7 @@ export function TokenUsage({ tokenData }: TokenUsageProps) {
                 </div>
                 <span className="text-sm font-semibold">
                   $
-                  {(hasModelData ? totalModelCost : metrics.totalCost).toFixed(
+                  {displayCost.toFixed(
                     2,
                   )}
                 </span>

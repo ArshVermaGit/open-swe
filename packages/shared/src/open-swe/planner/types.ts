@@ -7,6 +7,10 @@ import {
   ModelTokenData,
   TargetRepository,
   TaskPlan,
+  TokenBreakdown,
+  BudgetSettings,
+  BudgetWarning,
+  createInitialTokenBreakdown,
 } from "../types.js";
 import { withLangGraph } from "@langchain/langgraph/zod";
 import { tokenDataReducer } from "../../caching.js";
@@ -108,6 +112,42 @@ export const PlannerGraphStateObj = MessagesZodState.extend({
       schema: z.custom<ModelTokenData[]>().optional(),
       fn: tokenDataReducer,
     },
+  }),
+  /**
+   * Detailed token usage breakdown by agent.
+   */
+  tokenUsage: withLangGraph(z.custom<TokenBreakdown>(), {
+    reducer: {
+      schema: z.custom<TokenBreakdown>(),
+      fn: (state, update) => update ?? state,
+    },
+    default: createInitialTokenBreakdown,
+  }),
+  /**
+   * Budget settings for the session.
+   */
+  budgetSettings: withLangGraph(z.custom<BudgetSettings>(), {
+    reducer: {
+      schema: z.custom<BudgetSettings>(),
+      fn: (state, update) => update ?? state,
+    },
+    default: () => ({
+      maxBudget: 10.0,
+      warningThreshold: 0.8,
+      hardStop: false,
+      currency: "$",
+    }),
+  }),
+  /**
+   * List of budget warnings triggered.
+   */
+  budgetWarnings: withLangGraph(z.custom<BudgetWarning[]>(), {
+    reducer: {
+      schema: z.custom<BudgetWarning[]>(),
+      fn: (state: BudgetWarning[], update: BudgetWarning[]) =>
+        update ? [...state, ...update] : state,
+    },
+    default: () => [] as BudgetWarning[],
   }),
 });
 

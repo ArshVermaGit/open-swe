@@ -46,9 +46,19 @@ import {
 } from "@openswe/shared/open-swe/custom-node-events";
 import { StickToBottom } from "use-stick-to-bottom";
 import { TokenUsage } from "./token-usage";
+import { TokenCounter } from "../TokenCounter";
+import { TokenBreakdown as TokenBreakdownUI, PhaseBreakdown } from "../TokenBreakdown";
+import { BudgetWarningModal, BudgetThreshold } from "../BudgetWarningModal";
+import { 
+  HoverCard, 
+  HoverCardContent, 
+  HoverCardTrigger 
+} from "@/components/ui/hover-card";
+import { toast } from "sonner";
 import { HumanMessage as HumanMessageSDK } from "@langchain/langgraph-sdk";
 import { getMessageContentString } from "@openswe/shared/messages";
 import { useUser } from "@/hooks/useUser";
+import { useTokenUpdates } from "@/hooks/useTokenUpdates";
 
 interface ThreadViewProps {
   stream: ReturnType<typeof useStream<ManagerGraphState>>;
@@ -108,6 +118,19 @@ export function ThreadView({
   const [optimisticMessage, setOptimisticMessage] =
     useState<HumanMessageSDK | null>(null);
 
+  const { realTimeBreakdown, handleUpdate: handleTokenUpdate, resetUsage: resetTokenUsage } = useTokenUpdates();
+
+  // Budget Monitoring State
+  const [warningModalOpen, setWarningModalOpen] = useState(false);
+  const [activeThreshold, setActiveThreshold] = useState<BudgetThreshold>(70);
+  const [shownThresholds, setShownThresholds] = useState<Set<number>>(new Set());
+
+  const budgetSettings = (stream.values as any)?.budgetSettings || {
+    maxBudget: 5.0,
+    warningThreshold: 0.7,
+    hardStop: true,
+  };
+
   const { status: realTimeStatus, taskPlan: realTimeTaskPlan } =
     useThreadStatus(displayThread.id, {
       useTaskPlanConfig: true,
@@ -115,6 +138,68 @@ export function ThreadView({
 
   const [errorState, setErrorState] = useState<ErrorState | null>(null);
   const [hasGitHubIssue, setHasGitHubIssue] = useState(false);
+
+  // Monitor total cost for budget thresholds
+  useEffect(() => {
+    const totalCost = Object.values(realTimeBreakdown).reduce(
+      (sum, usage) => sum + (usage.total?.totalCost || 0),
+      0
+    );
+    const maxBudget = budgetSettings.maxBudget || 0;
+
+    if (maxBudget <= 0) return;
+
+    const percentage = totalCost / maxBudget;
+
+    if (percentage >= 1.0 && !shownThresholds.has(100)) {
+      setShownThresholds((prev) => new Set(prev).add(100));
+      setActiveThreshold(100);
+      setWarningModalOpen(true);
+      if (budgetSettings.hardStop) {
+        stream.stop();
+        toast.error("Budget Limit Reached", {
+          description: "Agent execution has been paused.",
+        });
+      }
+    } else if (percentage >= 0.9 && !shownThresholds.has(90)) {
+      setShownThresholds((prev) => new Set(prev).add(90));
+      setActiveThreshold(90);
+      setWarningModalOpen(true);
+    } else if (percentage >= 0.7 && !shownThresholds.has(70)) {
+      setShownThresholds((prev) => new Set(prev).add(70));
+      toast.warning("Budget Warning", {
+        description: "You have used 70% of your task budget.",
+      });
+    }
+  }, [realTimeBreakdown, budgetSettings, shownThresholds]);
+
+  const mapToPhaseBreakdown = (): PhaseBreakdown[] => {
+    return Object.entries(realTimeBreakdown).map(([role, usage]) => ({
+      id: role,
+      title: role.charAt(0).toUpperCase() + role.slice(1),
+      totalTokens: usage.total.totalTokens,
+      totalCost: usage.total.totalCost,
+      operations: Object.entries(usage.byModel).map(([model, data]) => ({
+        id: model,
+        name: model.split(":").pop() || model,
+        tokens: data.totalTokens,
+        cost: data.totalCost,
+        isExpensive: data.totalCost > 1.0,
+      })),
+    }));
+  };
+
+  const grandTotals = Object.values(realTimeBreakdown).reduce(
+    (acc, usage) => ({
+      tokens: acc.tokens + usage.total.totalTokens,
+      cost: acc.cost + usage.total.totalCost,
+      inputTokens: acc.inputTokens + usage.total.inputTokens,
+      outputTokens: acc.outputTokens + usage.total.outputTokens,
+      inputCost: acc.inputCost + usage.total.inputCost,
+      outputCost: acc.outputCost + usage.total.outputCost,
+    }),
+    { tokens: 0, cost: 0, inputTokens: 0, outputTokens: 0, inputCost: 0, outputCost: 0 }
+  );
 
   useEffect(() => {
     stream.client.threads.get(displayThread.id).then((thread) => {
@@ -193,6 +278,7 @@ export function ThreadView({
       if (isCustomNodeEvent(event)) {
         setCustomPlannerNodeEvents((prev) => [...prev, event]);
       }
+      handleTokenUpdate(event);
     },
     fetchStateHistory: false,
   });
@@ -219,6 +305,7 @@ export function ThreadView({
       if (isCustomNodeEvent(event)) {
         setCustomProgrammerNodeEvents((prev) => [...prev, event]);
       }
+      handleTokenUpdate(event);
     },
     fetchStateHistory: false,
   });
@@ -376,7 +463,7 @@ export function ThreadView({
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <div
               className={cn(
-                "size-2 flex-shrink-0 rounded-full",
+                "size-2 shrink-0 rounded-full",
                 getStatusDotColor(realTimeStatus),
               )}
             ></div>
@@ -429,7 +516,7 @@ export function ThreadView({
                 setSelectedTab(value as "planner" | "programmer")
               }
             >
-              <div className="flex flex-shrink-0 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-3">
                 <TabsList className="bg-muted/70">
                   <TabsTrigger value="planner">Planner</TabsTrigger>
                   <TabsTrigger value="programmer">Programmer</TabsTrigger>
@@ -461,12 +548,39 @@ export function ThreadView({
                         streamName="Programmer"
                       />
                     )}
-                  <TokenUsage
-                    tokenData={joinTokenData(
-                      plannerStream.values.tokenData,
-                      programmerStream.values.tokenData,
-                    )}
-                  />
+                  <div className="flex items-center gap-2">
+                    <TokenCounter
+                      className="max-w-[240px] shadow-none border-none bg-transparent"
+                      inputTokens={grandTotals.inputTokens}
+                      outputTokens={grandTotals.outputTokens}
+                      inputCost={grandTotals.inputCost}
+                      outputCost={grandTotals.outputCost}
+                      maxBudget={budgetSettings.maxBudget}
+                      currentSpend={grandTotals.cost}
+                    />
+                    <HoverCard>
+                      <HoverCardTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                          <GitBranch className="h-4 w-4" />
+                        </Button>
+                      </HoverCardTrigger>
+                      <HoverCardContent className="w-80 p-0" align="end">
+                        <TokenBreakdownUI
+                          className="border-none shadow-none"
+                          phases={mapToPhaseBreakdown()}
+                          grandTotalTokens={grandTotals.tokens}
+                          grandTotalCost={grandTotals.cost}
+                        />
+                      </HoverCardContent>
+                    </HoverCard>
+                    <TokenUsage
+                      tokenData={joinTokenData(
+                        plannerStream.values.tokenData,
+                        programmerStream.values.tokenData,
+                      )}
+                      realTimeUsage={realTimeBreakdown}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -608,6 +722,25 @@ export function ThreadView({
           taskPlan={programmerTaskPlan}
         />
       )}
+      <BudgetWarningModal
+        isOpen={warningModalOpen}
+        onClose={() => setWarningModalOpen(false)}
+        threshold={activeThreshold}
+        currentSpend={grandTotals.cost}
+        maxBudget={budgetSettings.maxBudget}
+        onContinue={() => setWarningModalOpen(false)}
+        onCancel={() => {
+          cancelRun();
+          setWarningModalOpen(false);
+        }}
+        onIncreaseLimit={() => {
+          // Future: Open BudgetSettingsForm
+          setWarningModalOpen(false);
+          toast.info("Settings", {
+            description: "Please update your budget in the Settings page.",
+          });
+        }}
+      />
     </div>
   );
 }

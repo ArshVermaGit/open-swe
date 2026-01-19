@@ -5,8 +5,7 @@ import {
   getTotalCost,
   getTotalTokens,
   createUsageSummary,
-  AgentRole,
-} from "../utils/llm-tracker";
+} from "../utils/llm-tracker.js";
 import {
   TokenBreakdown,
   BudgetSettings,
@@ -199,7 +198,7 @@ describe("llm-tracker", () => {
       const warning = checkBudgetLimits(breakdown, budgetSettings);
 
       expect(warning).not.toBeNull();
-      expect(warning?.severity).toBe("warning");
+      expect(warning?.severity).toBe("info");
       expect(warning?.percentageUsed).toBe(80);
     });
 

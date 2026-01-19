@@ -1,4 +1,6 @@
 import js from "@eslint/js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
@@ -12,6 +14,10 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
+      parserOptions: {
+        project: ["./tsconfig.json"],
+        tsconfigRootDir: path.dirname(fileURLToPath(import.meta.url)),
+      },
     },
     plugins: {
       "react-hooks": reactHooks,

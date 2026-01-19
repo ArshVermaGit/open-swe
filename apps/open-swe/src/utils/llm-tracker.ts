@@ -20,6 +20,12 @@ import {
 import { calculateCost, formatCost } from "../config/pricing.js";
 import { trackCachePerformance } from "./caching.js";
 import { createLogger, LogLevel } from "./logger.js";
+import { getBudgetAction, BudgetAction, BudgetCheckResult, generateBudgetMessage } from "./budget-checker.js";
+import { dispatchCustomEvent } from "@langchain/core/callbacks/dispatch";
+
+// Re-export budget checking utilities for easier access
+export { getBudgetAction, BudgetAction, generateBudgetMessage };
+export type { BudgetCheckResult };
 
 const logger = createLogger(LogLevel.INFO, "LLMTracker");
 
@@ -114,6 +120,20 @@ export async function invokeWithTracking<T extends AIMessageChunk>(
       inputTokens,
       outputTokens,
       totalCost: formatCost(costResult.totalCost),
+    });
+
+    // Dispatch a custom event for real-time tracking (SSE/WebSocket flow)
+    await dispatchCustomEvent("token-update", {
+      model: modelName,
+      agentRole: options.agentRole,
+      inputTokens,
+      outputTokens,
+      cost: {
+        inputCost: costResult.inputCost,
+        outputCost: costResult.outputCost,
+        totalCost: costResult.totalCost,
+      },
+      timestamp: new Date().toISOString(),
     });
 
     return {
@@ -264,19 +284,26 @@ export function updateTokenBreakdown(
 }
 
 /**
- * Checks if current token usage exceeds budget limits.
+ * Checks if current token usage exceeds budget limits using advanced checker.
+ *
+ * @param breakdown - Current token breakdown
+ * @param budgetSettings - User's budget configuration
+ * @returns Result with recommended action and message
+ */
+export function evaluateBudget(
+  breakdown: TokenBreakdown,
+  budgetSettings: BudgetSettings
+): BudgetCheckResult {
+  const totalCost = getTotalCost(breakdown);
+  return getBudgetAction(totalCost, budgetSettings);
+}
+
+/**
+ * Checks if current token usage exceeds budget limits (Legacy support).
  *
  * @param breakdown - Current token breakdown
  * @param budgetSettings - User's budget configuration
  * @returns BudgetWarning if limits are exceeded, null otherwise
- *
- * @example
- * ```typescript
- * const warning = checkBudgetLimits(state.tokenUsage, state.budgetSettings);
- * if (warning) {
- *   return { budgetWarnings: [warning] };
- * }
- * ```
  */
 export function checkBudgetLimits(
   breakdown: TokenBreakdown,

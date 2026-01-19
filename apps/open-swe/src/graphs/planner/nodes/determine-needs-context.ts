@@ -16,9 +16,14 @@ import { isHumanMessage } from "@langchain/core/messages";
 import { getMessageContentString } from "@openswe/shared/messages";
 import { filterHiddenMessages } from "../../../utils/message/filter-hidden.js";
 import { createLogger, LogLevel } from "../../../utils/logger.js";
-import { trackCachePerformance } from "../../../utils/caching.js";
 import { getModelManager } from "../../../utils/llms/model-manager.js";
 import { shouldCreateIssue } from "../../../utils/should-create-issue.js";
+import {
+  invokeWithTracking,
+  updateTokenBreakdown,
+  evaluateBudget,
+  BudgetAction,
+} from "../../../utils/llm-tracker.js";
 
 const logger = createLogger(LogLevel.INFO, "DetermineNeedsContext");
 
@@ -142,24 +147,66 @@ export async function determineNeedsContext(
       : {}),
   });
 
-  const response = await modelWithTools.invoke([
-    {
-      role: "user",
-      content: formatSystemPrompt({
-        ...state,
-        messages: [...filterHiddenMessages(state.messages), ...missingMessages],
-      }),
-    },
-  ]);
+  const { response, tokenData, cost } = await invokeWithTracking(
+    modelWithTools,
+    [
+      {
+        role: "user",
+        content: formatSystemPrompt({
+          ...state,
+          messages: [
+            ...filterHiddenMessages(state.messages),
+            ...missingMessages,
+          ],
+        }),
+      },
+    ],
+    { modelName, agentRole: "planner" }
+  );
 
   const toolCall = response.tool_calls?.[0];
   if (!toolCall) {
     throw new Error("No tool call found.");
   }
 
+  const newTokenUsage = updateTokenBreakdown(
+    state.tokenUsage,
+    "planner",
+    tokenData,
+    cost
+  );
+
+  // Handle budget status
+  const budgetResult = evaluateBudget(newTokenUsage, state.budgetSettings);
+
+  if (budgetResult.action === BudgetAction.STOP && state.budgetSettings.hardStop) {
+    throw new Error(
+      `Budget Limit Reached: ${budgetResult.message}. Execution halted.`
+    );
+  }
+
   const commandUpdate: PlannerGraphUpdate = {
     messages: missingMessages,
-    tokenData: trackCachePerformance(response, modelName),
+    tokenData,
+    tokenUsage: newTokenUsage,
+    budgetWarnings:
+      budgetResult.action !== BudgetAction.CONTINUE
+        ? [
+            {
+              currentSpend: budgetResult.currentSpend,
+              budgetLimit: budgetResult.maxBudget,
+              percentageUsed: budgetResult.percentageUsed,
+              message: budgetResult.message,
+              severity:
+                budgetResult.action === BudgetAction.STOP
+                  ? "critical"
+                  : budgetResult.action === BudgetAction.PAUSE
+                    ? "warning"
+                    : "info",
+              timestamp: new Date().toISOString(),
+            },
+          ]
+        : [],
   };
 
   const shouldGatherContext =

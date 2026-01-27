@@ -10,6 +10,11 @@
   <h1>Open SWE - An Open-Source Asynchronous Coding Agent</h1>
 </div>
 
+> [!WARNING]
+> **⚠️ DEPRECATION NOTICE**
+> 
+> This repository is no longer actively maintained and will not receive further updates. The project has been deprecated and users are advised to seek alternative solutions for their coding agent needs.
+
 Open SWE is an open-source cloud-based asynchronous coding agent built with [LangGraph](https://docs.langchain.com/oss/javascript/langgraph/overview). It autonomously understands codebases, plans solutions, and executes code changes across entire repositories—from initial planning to opening pull requests.
 
 > [!TIP]
@@ -39,5 +44,5 @@ Open SWE is an open-source cloud-based asynchronous coding agent built with [Lan
 Open SWE can be used in multiple ways:
 
 - 🖥️ **From the UI**. You can create, manage and execute Open SWE tasks from the [web application](https://swe.langchain.com).
-- 📝 **From GitHub**. You can start Open SWE tasks directly from GitHub issues simply by adding a label `open-swe`, or `open-swe-auto` (adding `-auto` will cause Open SWE to automatically accept the plan, requiring no intervention from you). For enhanced performance on complex tasks, use `open-swe-max` or `open-swe-max-auto` labels which utilize Claude Opus 4.1 for both planning and programming.
+- 📝 **From GitHub**. You can start Open SWE tasks directly from GitHub issues simply by adding a label `open-swe`, or `open-swe-auto` (adding `-auto` will cause Open SWE to automatically accept the plan, requiring no intervention from you). The default `open-swe` labels now use Claude Opus 4.5 for optimal performance. Note: `open-swe-max` and `open-swe-max-auto` labels are deprecated and should no longer be used.
 
